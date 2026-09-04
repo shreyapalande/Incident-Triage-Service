@@ -1,4 +1,6 @@
 import type { Incident } from "@prisma/client";
+import type { Logger } from "pino";
+import { logger as baseLogger } from "../logger.js";
 
 const SEVERITY_EMOJI: Record<string, string> = {
   CRITICAL: "🔴",
@@ -8,10 +10,13 @@ const SEVERITY_EMOJI: Record<string, string> = {
   UNKNOWN: "⚪",
 };
 
-export async function postToSlack(incident: Incident): Promise<void> {
+export async function postToSlack(incident: Incident, log: Logger = baseLogger): Promise<void> {
   const webhookUrl = process.env.SLACK_WEBHOOK_URL;
   if (!webhookUrl) {
-    console.warn("SLACK_WEBHOOK_URL not set - skipping Slack notification");
+    log.warn(
+      { event: "slack_post_result", incidentId: incident.id, result: "skipped" },
+      "SLACK_WEBHOOK_URL not set - skipping Slack notification",
+    );
     return;
   }
 

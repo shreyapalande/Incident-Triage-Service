@@ -29,13 +29,13 @@ triageEvalRouter.post("/", async (req, res) => {
   const incidentTitle = title ?? description!.slice(0, 120);
 
   try {
-    const triage = await triageIncident({
+    const { result } = await triageIncident({
       source,
       title: incidentTitle,
       description,
       rawPayload: req.body,
     });
-    return res.status(200).json(triage);
+    return res.status(200).json(result);
   } catch (err) {
     return res.status(502).json({
       error: err instanceof Error ? err.message : "Unknown triage error",

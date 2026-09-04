@@ -23,6 +23,9 @@ webhook POST -> persist raw alert -> Gemini triage -> update record -> Slack not
 - **Data**: Prisma + Postgres (Neon), one `Incident` table.
 - **Dashboard**: Vite + React SPA (`client/`), built and served statically by Express
   in production — one deployable unit, no separate frontend host.
+- **Observability**: [src/logger.ts](src/logger.ts) (Pino) + a per-request correlation
+  ID ([src/middleware/correlationId.ts](src/middleware/correlationId.ts)) turn every
+  webhook request into a structured, greppable trace — see below.
 
 ## Key design decisions
 
@@ -47,6 +50,24 @@ webhook POST -> persist raw alert -> Gemini triage -> update record -> Slack not
   middleware on the route — before body validation, persistence, or triage — so an
   unsigned or forged request is rejected with `401` before it touches the database or
   costs an LLM call.
+- **Bounded retries with a real time budget, not just a retry count.** Triage retries
+  on `429` (rotate to the next key) and `503` (short delay, since a whole-service
+  outage isn't fixed by switching keys), capped at 3 attempts. A 15s overall time
+  budget is enforced two ways: checked between attempts, and passed as an HTTP timeout
+  on the in-flight Gemini call itself — a single slow/hanging call was found in testing
+  to blow past a between-attempts-only check on its own (one attempt alone took 88s),
+  so the budget has to bound the call, not just the loop around it. `persist-before-
+  triage` means a timeout still fails gracefully: the incident stays saved with
+  `triageError` set instead of the request hanging.
+- **Structured logs, not `console.log`.** Every log line is a JSON object (Pino) with
+  an `event` field and relevant data, not a free-text string — built for grepping/
+  aggregating, not just reading in a terminal. A correlation ID is generated per
+  webhook request and attached to every log line produced while handling it (signature
+  check, validation, each DB write, the triage call and its retries, the Slack post),
+  so one request's full trace can be pulled out of an interleaved log stream by
+  `correlationId` alone. `triage_call_completed`/`triage_call_failed` also carry
+  `attempts` and `retryTimeMs`, so retry stacking that inflates latency is visible in
+  the logs, not just folded into one final latency number.
 
 ## Local development
 
@@ -115,3 +136,15 @@ The container runs `prisma migrate deploy` on startup before starting the server
    starting with `"` and failed schema validation (`P1012`). Fixed by reformatting
    `.env` and `.env.example` to unquoted `KEY=value` lines, which both Docker and
    `dotenv` handle correctly.
+3. **Retries across the whole key pool could silently take 60+ seconds.** Before
+   adding structured logging, triage failures on Gemini's free tier were invisible
+   beyond one final latency number. Once per-attempt logging was added, a real request
+   traced to 130s+, caused by retrying every key in a 12-key pool sequentially on any
+   error. Fixed by capping retries at 3 attempts, treating `429`/`503` differently
+   (rotate vs. short delay), and adding a 15s overall time budget.
+4. **A time budget checked only between attempts doesn't bound a single hanging
+   attempt.** The first version of the fix above still let one in-flight Gemini call
+   run for 88s uninterrupted, because the budget check only ran before starting a new
+   attempt. Fixed by also passing the remaining budget as `httpOptions.timeout` on the
+   call itself, so the SDK aborts it once the budget is spent, regardless of whether
+   another attempt would have been made.

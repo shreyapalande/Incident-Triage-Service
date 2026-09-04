@@ -1,5 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
+import type { Logger } from "pino";
 import { KeyRotator, parseKeysFromEnv } from "../llm/keyRotation.js";
+import { logger as baseLogger } from "../logger.js";
 import { TriageSchema, type TriageResult } from "./schema.js";
 
 const MODEL = "gemini-3.5-flash-lite";
@@ -83,10 +85,53 @@ function getRotator(): KeyRotator {
   return rotator;
 }
 
+// Cap retries at a handful of keys rather than cycling the whole pool - if the
+// service itself is degraded, trying 12 keys one after another just stacks up
+// latency without improving the odds. Paired with TIME_BUDGET_MS as a hard
+// ceiling so a worst case can't silently take 60+ seconds.
+const MAX_ATTEMPTS = 3;
+const TIME_BUDGET_MS = 15_000;
+// 503 is a whole-service capacity problem, not a per-key limit - rotating
+// keys doesn't help the way it does for a 429, so pause briefly instead.
+const SERVICE_UNAVAILABLE_RETRY_DELAY_MS = 1_500;
+
+function getErrorStatus(err: unknown): number | undefined {
+  return (
+    (err as { status?: number; code?: number })?.status ??
+    (err as { status?: number; code?: number })?.code
+  );
+}
+
 function isRateLimitError(err: unknown): boolean {
-  const status = (err as { status?: number; code?: number })?.status ??
-    (err as { status?: number; code?: number })?.code;
-  return status === 429;
+  return getErrorStatus(err) === 429;
+}
+
+function isServiceUnavailableError(err: unknown): boolean {
+  return getErrorStatus(err) === 503;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export class TriageError extends Error {
+  attempts: number;
+  retryTimeMs: number;
+
+  constructor(message: string, attempts: number, retryTimeMs: number) {
+    super(message);
+    this.name = "TriageError";
+    this.attempts = attempts;
+    this.retryTimeMs = retryTimeMs;
+  }
+}
+
+export interface TriageOutcome {
+  result: TriageResult;
+  /** Total number of Gemini calls made (including any retries). */
+  attempts: number;
+  /** Total wall-clock time spent across all attempts, including any retry delays. */
+  retryTimeMs: number;
 }
 
 export async function triageIncident(input: {
@@ -94,7 +139,10 @@ export async function triageIncident(input: {
   title: string;
   description?: string;
   rawPayload: unknown;
-}): Promise<TriageResult> {
+  log?: Logger;
+}): Promise<TriageOutcome> {
+  const log = input.log ?? baseLogger;
+
   const userContent = [
     `Source: ${input.source}`,
     `Title: ${input.title}`,
@@ -105,13 +153,31 @@ export async function triageIncident(input: {
     .join("\n\n");
 
   const pool = getRotator();
-  const attempts = Math.max(pool.size, 1);
+  const loopStart = Date.now();
   let lastError: unknown;
+  let attemptsMade = 0;
 
-  for (let attempt = 0; attempt < attempts; attempt++) {
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const elapsedBeforeAttempt = Date.now() - loopStart;
+    if (elapsedBeforeAttempt >= TIME_BUDGET_MS) {
+      log.warn(
+        { event: "gemini_retry_budget_exceeded", model: MODEL, attempts: attemptsMade, retryTimeMs: elapsedBeforeAttempt },
+        "Triage retry time budget exceeded, giving up",
+      );
+      break;
+    }
+
     const apiKey = pool.getKey();
     const client = new GoogleGenAI({ apiKey });
+    attemptsMade++;
 
+    // Bind this attempt's own HTTP call to whatever's left of the overall
+    // budget - otherwise a single slow/hanging call can blow past
+    // TIME_BUDGET_MS on its own, since the check above only runs between
+    // attempts, not during one.
+    const remainingBudgetMs = TIME_BUDGET_MS - (Date.now() - loopStart);
+
+    const attemptStart = Date.now();
     try {
       const response = await client.models.generateContent({
         model: MODEL,
@@ -120,27 +186,87 @@ export async function triageIncident(input: {
           systemInstruction: SYSTEM_PROMPT,
           responseMimeType: "application/json",
           responseSchema: RESPONSE_SCHEMA,
+          httpOptions: { timeout: remainingBudgetMs },
         },
       });
+      const latencyMs = Date.now() - attemptStart;
 
       pool.reportSuccess(apiKey);
+
+      log.info(
+        {
+          event: "gemini_call_completed",
+          model: MODEL,
+          attempt,
+          latencyMs,
+          usage: response.usageMetadata
+            ? {
+                promptTokenCount: response.usageMetadata.promptTokenCount,
+                candidatesTokenCount: response.usageMetadata.candidatesTokenCount,
+                totalTokenCount: response.usageMetadata.totalTokenCount,
+              }
+            : undefined,
+        },
+        "Gemini call completed",
+      );
 
       if (!response.text) {
         throw new Error("Triage model returned an empty response");
       }
 
-      return TriageSchema.parse(JSON.parse(response.text));
+      const result = TriageSchema.parse(JSON.parse(response.text));
+      return { result, attempts: attemptsMade, retryTimeMs: Date.now() - loopStart };
     } catch (err) {
+      const latencyMs = Date.now() - attemptStart;
       lastError = err;
+
       if (isRateLimitError(err)) {
+        log.warn(
+          { event: "gemini_call_rate_limited", model: MODEL, attempt, latencyMs },
+          "Gemini call rate-limited, rotating to next key",
+        );
         pool.reportRateLimited(apiKey);
         continue;
       }
-      throw err;
+
+      if (isServiceUnavailableError(err)) {
+        const remainingBudgetMs = TIME_BUDGET_MS - (Date.now() - loopStart);
+        log.warn(
+          { event: "gemini_call_unavailable", model: MODEL, attempt, latencyMs },
+          "Gemini reported service unavailable, retrying after a short delay",
+        );
+        if (remainingBudgetMs > 0) {
+          await sleep(Math.min(SERVICE_UNAVAILABLE_RETRY_DELAY_MS, remainingBudgetMs));
+        }
+        continue;
+      }
+
+      const retryTimeMsSoFar = Date.now() - loopStart;
+      log.error(
+        {
+          event: "gemini_call_failed",
+          model: MODEL,
+          attempt,
+          latencyMs,
+          attempts: attemptsMade,
+          retryTimeMs: retryTimeMsSoFar,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "Gemini call failed",
+      );
+      throw new TriageError(
+        err instanceof Error ? err.message : String(err),
+        attemptsMade,
+        retryTimeMsSoFar,
+      );
     }
   }
 
-  throw new Error(
-    `Triage failed after exhausting the key pool: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+  const retryTimeMs = Date.now() - loopStart;
+  const message = `Triage failed after ${attemptsMade} attempt(s) over ${retryTimeMs}ms: ${lastError instanceof Error ? lastError.message : String(lastError)}`;
+  log.error(
+    { event: "gemini_retries_exhausted", model: MODEL, attempts: attemptsMade, retryTimeMs },
+    message,
   );
+  throw new TriageError(message, attemptsMade, retryTimeMs);
 }

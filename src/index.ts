@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { webhookRouter } from "./routes/webhook.js";
 import { incidentsRouter } from "./routes/incidents.js";
 import { triageEvalRouter } from "./routes/triageEval.js";
+import { logger } from "./logger.js";
 import "./types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -39,5 +40,5 @@ if (process.env.NODE_ENV === "production") {
 
 const port = Number(process.env.PORT) || 3000;
 app.listen(port, () => {
-  console.log(`Incident triage service listening on port ${port}`);
+  logger.info({ event: "server_started", port }, "Incident triage service listening");
 });
