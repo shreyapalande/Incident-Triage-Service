@@ -13,8 +13,8 @@ webhook POST -> persist raw alert -> Gemini triage -> update record -> Slack not
 ```
 
 - **Server**: Express + TypeScript (`src/`). `POST /api/webhook/incident` ingests
-  alerts; `GET /api/incidents`, `GET /api/incidents/:id`, `PATCH /api/incidents/:id/resolve`
-  serve the dashboard.
+  alerts (HMAC-SHA256 signed, see below); `GET /api/incidents`, `GET /api/incidents/:id`,
+  `PATCH /api/incidents/:id/resolve` serve the dashboard.
 - **Triage**: [src/triage/triageIncident.ts](src/triage/triageIncident.ts) calls Gemini
   (`gemini-3.5-flash-lite`) for structured JSON output, validated against a Zod schema.
 - **Key rotation**: [src/llm/keyRotation.ts](src/llm/keyRotation.ts) is a standalone,
@@ -41,12 +41,18 @@ webhook POST -> persist raw alert -> Gemini triage -> update record -> Slack not
 - **Prisma + Neon pooled connection.** Neon's pooled (`-pooler`) endpoint is required
   because the app opens short-lived connections per request/container; the direct
   (non-pooled) endpoint runs out of connections under normal traffic.
+- **HMAC-signed webhook, verified before anything else runs.** `/api/webhook/incident`
+  is a public URL, so anyone who finds it could otherwise inject fake incidents (spam,
+  bogus Slack posts, wasted Gemini calls). Signature verification runs as the first
+  middleware on the route — before body validation, persistence, or triage — so an
+  unsigned or forged request is rejected with `401` before it touches the database or
+  costs an LLM call.
 
 ## Local development
 
 ```bash
 # server
-cp .env.example .env   # fill in DATABASE_URL, GEMINI_API_KEYS, SLACK_WEBHOOK_URL
+cp .env.example .env   # fill in DATABASE_URL, GEMINI_API_KEYS, SLACK_WEBHOOK_URL, WEBHOOK_SECRET
 npm install
 npx prisma migrate dev --name init
 npm run dev             # http://localhost:3000
@@ -57,13 +63,27 @@ npm install
 npm run dev              # http://localhost:5173, proxies /api to :3000
 ```
 
-Send a test alert:
+### Signing webhook requests
+
+`/api/webhook/incident` requires an `X-Signature` header: the lowercase hex-encoded
+HMAC-SHA256 of the exact raw request body, keyed with `WEBHOOK_SECRET`. Requests with
+a missing, malformed, or mismatched signature get `401 Unauthorized` before any other
+logic runs.
+
+To call it manually, compute the signature over the exact JSON string you're sending
+(whitespace matters — sign the same bytes you `curl -d`) and pass it as a header:
 
 ```bash
+BODY='{"source":"datadog","title":"DB CPU at 95%","description":"Primary Postgres instance CPU sustained above 90% for 10 minutes"}'
+SIGNATURE=$(node -e "console.log(require('crypto').createHmac('sha256', process.env.WEBHOOK_SECRET).update(process.argv[1]).digest('hex'))" "$BODY")
+
 curl -X POST http://localhost:3000/api/webhook/incident \
   -H "Content-Type: application/json" \
-  -d '{"source":"datadog","title":"DB CPU at 95%","description":"Primary Postgres instance CPU sustained above 90% for 10 minutes"}'
+  -H "X-Signature: $SIGNATURE" \
+  -d "$BODY"
 ```
+
+(`WEBHOOK_SECRET` must be exported in your shell, or substitute its value directly.)
 
 ## Docker
 
@@ -76,9 +96,9 @@ docker run -p 3000:3000 --env-file .env incident-triage
 
 - **Render**: Web Service from this repo's Dockerfile, env vars `DATABASE_URL`
   (Neon pooled connection string), `GEMINI_API_KEYS`, `SLACK_WEBHOOK_URL`,
-  `PUBLIC_BASE_URL`.
+  `PUBLIC_BASE_URL`, `WEBHOOK_SECRET`.
 - **Fly.io**: `fly launch`, then `fly secrets set DATABASE_URL=... GEMINI_API_KEYS=...
-  SLACK_WEBHOOK_URL=... PUBLIC_BASE_URL=...`.
+  SLACK_WEBHOOK_URL=... PUBLIC_BASE_URL=... WEBHOOK_SECRET=...`.
 
 The container runs `prisma migrate deploy` on startup before starting the server.
 

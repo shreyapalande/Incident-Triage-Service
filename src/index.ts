@@ -5,12 +5,23 @@ import { fileURLToPath } from "node:url";
 import { webhookRouter } from "./routes/webhook.js";
 import { incidentsRouter } from "./routes/incidents.js";
 import { triageEvalRouter } from "./routes/triageEval.js";
+import "./types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "2mb" }));
+app.use(
+  express.json({
+    limit: "2mb",
+    // Capture the exact raw bytes before JSON parsing so the webhook route
+    // can verify an HMAC signature computed over what was actually sent -
+    // the parsed/re-serialized body would not byte-for-byte match it.
+    verify: (req, _res, buf) => {
+      req.rawBody = Buffer.from(buf);
+    },
+  }),
+);
 
 app.use("/api/webhook", webhookRouter);
 app.use("/api/incidents", incidentsRouter);
