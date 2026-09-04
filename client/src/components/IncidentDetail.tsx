@@ -3,6 +3,8 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import type { Incident } from "../types";
 import { SeverityBadge } from "./SeverityBadge";
+import { StatusBadge } from "./StatusBadge";
+import { formatRelativeTime } from "../lib/time";
 
 export function IncidentDetail() {
   const { id } = useParams<{ id: string }>();
@@ -13,7 +15,13 @@ export function IncidentDetail() {
     if (id) api.getIncident(id).then(setIncident);
   }, [id]);
 
-  if (!incident) return <p>Loading...</p>;
+  if (!incident) {
+    return (
+      <div className="state-panel">
+        <div className="spinner" />
+      </div>
+    );
+  }
 
   async function handleResolve() {
     if (!id) return;
@@ -26,40 +34,66 @@ export function IncidentDetail() {
     }
   }
 
+  const isResolved = incident.status === "RESOLVED";
+
   return (
     <div>
-      <Link to="/">&larr; Back to all incidents</Link>
-      <h2 style={{ marginTop: 12 }}>{incident.title}</h2>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 16 }}>
-        <SeverityBadge severity={incident.severity} />
-        <span>{incident.category}</span>
-        <span>·</span>
-        <span>{incident.status}</span>
+      <Link className="back-link" to="/">
+        ← All incidents
+      </Link>
+
+      <div className="detail-header">
+        <div>
+          <h1 className="detail-title">{incident.title}</h1>
+          <div className="detail-meta-row">
+            <SeverityBadge severity={incident.severity} />
+            <StatusBadge status={incident.status} />
+            <span className="badge-tag">{incident.category}</span>
+            <span className="detail-meta-sep">·</span>
+            <span className="cell-timestamp">
+              {incident.source} · reported {formatRelativeTime(incident.createdAt)}
+            </span>
+          </div>
+        </div>
+
+        {isResolved ? (
+          <button className="btn btn-success" disabled>
+            ✓ Resolved
+          </button>
+        ) : (
+          <button className="btn btn-primary" onClick={handleResolve} disabled={resolving}>
+            {resolving ? <span className="spinner" style={{ borderTopColor: "white" }} /> : null}
+            {resolving ? "Resolving…" : "Mark resolved"}
+          </button>
+        )}
       </div>
 
       {incident.triageError && (
-        <p style={{ color: "#dc2626" }}>Triage failed: {incident.triageError}</p>
+        <div className="alert-banner">
+          <span>⚠</span>
+          <span>
+            <strong>Triage failed.</strong> {incident.triageError}
+          </span>
+        </div>
       )}
 
-      <section style={{ marginBottom: 16 }}>
-        <h3>Summary</h3>
-        <p>{incident.summary || "—"}</p>
-      </section>
+      <div className="card detail-grid">
+        <div className="detail-section">
+          <p className="detail-section-title">Summary</p>
+          <p className="detail-section-body">{incident.summary || "No summary available."}</p>
+        </div>
 
-      <section style={{ marginBottom: 16 }}>
-        <h3>Recommended action</h3>
-        <p>{incident.recommendedAction || "—"}</p>
-      </section>
+        <div className="detail-section">
+          <p className="detail-section-title">Recommended action</p>
+          <p className="detail-section-body">
+            {incident.recommendedAction || "No recommendation available."}
+          </p>
+        </div>
+      </div>
 
-      <button onClick={handleResolve} disabled={incident.status === "RESOLVED" || resolving}>
-        {incident.status === "RESOLVED" ? "Resolved" : resolving ? "Resolving..." : "Resolve"}
-      </button>
-
-      <details style={{ marginTop: 24 }}>
-        <summary>Raw payload</summary>
-        <pre style={{ whiteSpace: "pre-wrap", background: "#f5f5f5", padding: 12 }}>
-          {JSON.stringify(incident.rawPayload, null, 2)}
-        </pre>
+      <details className="raw-payload">
+        <summary>View raw payload</summary>
+        <pre>{JSON.stringify(incident.rawPayload, null, 2)}</pre>
       </details>
     </div>
   );

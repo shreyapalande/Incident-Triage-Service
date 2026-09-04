@@ -3,6 +3,14 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import type { Incident } from "../types";
 import { SeverityBadge } from "./SeverityBadge";
+import { StatusBadge } from "./StatusBadge";
+import { formatRelativeTime } from "../lib/time";
+
+const FILTERS: { label: string; value: string }[] = [
+  { label: "All", value: "" },
+  { label: "Open", value: "OPEN" },
+  { label: "Resolved", value: "RESOLVED" },
+];
 
 export function IncidentList() {
   const [incidents, setIncidents] = useState<Incident[] | null>(null);
@@ -10,62 +18,104 @@ export function IncidentList() {
 
   useEffect(() => {
     let cancelled = false;
-    api.listIncidents(statusFilter || undefined).then((data) => {
-      if (!cancelled) setIncidents(data);
-    });
-    const interval = setInterval(() => {
+    const load = () => {
       api.listIncidents(statusFilter || undefined).then((data) => {
         if (!cancelled) setIncidents(data);
       });
-    }, 15000);
+    };
+    load();
+    const interval = setInterval(load, 15000);
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
   }, [statusFilter]);
 
+  const openCount = incidents?.filter((i) => i.status === "OPEN").length;
+
   return (
     <div>
-      <div style={{ marginBottom: 16 }}>
-        <label>
-          Status:{" "}
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-            <option value="">All</option>
-            <option value="OPEN">Open</option>
-            <option value="RESOLVED">Resolved</option>
-          </select>
-        </label>
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Incidents</h1>
+          <p className="page-description">
+            {incidents === null
+              ? "Loading incident history…"
+              : openCount === undefined || openCount === 0
+                ? "No open incidents right now."
+                : `${openCount} open incident${openCount === 1 ? "" : "s"} need attention.`}
+          </p>
+        </div>
+        <div className="filter-tabs">
+          {FILTERS.map((f) => (
+            <button
+              key={f.value}
+              className={`filter-tab${statusFilter === f.value ? " active" : ""}`}
+              onClick={() => setStatusFilter(f.value)}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {incidents === null && <p>Loading...</p>}
-      {incidents?.length === 0 && <p>No incidents.</p>}
+      <div className="card" style={{ overflow: "hidden" }}>
+        {incidents === null && (
+          <div className="state-panel">
+            <div className="spinner" />
+            <div className="state-panel-title" style={{ marginTop: 8 }}>
+              Loading incidents
+            </div>
+          </div>
+        )}
 
-      <table width="100%" cellPadding={8} style={{ borderCollapse: "collapse" }}>
-        <thead>
-          <tr style={{ textAlign: "left", borderBottom: "1px solid #ddd" }}>
-            <th>Severity</th>
-            <th>Title</th>
-            <th>Source</th>
-            <th>Status</th>
-            <th>Created</th>
-          </tr>
-        </thead>
-        <tbody>
-          {incidents?.map((incident) => (
-            <tr key={incident.id} style={{ borderBottom: "1px solid #eee" }}>
-              <td>
-                <SeverityBadge severity={incident.severity} />
-              </td>
-              <td>
-                <Link to={`/incidents/${incident.id}`}>{incident.title}</Link>
-              </td>
-              <td>{incident.source}</td>
-              <td>{incident.status}</td>
-              <td>{new Date(incident.createdAt).toLocaleString()}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+        {incidents?.length === 0 && (
+          <div className="state-panel">
+            <div className="state-panel-icon">✓</div>
+            <div className="state-panel-title">Nothing here</div>
+            <div className="state-panel-hint">
+              {statusFilter
+                ? "No incidents match this filter."
+                : "Incidents reported via the webhook will show up here."}
+            </div>
+          </div>
+        )}
+
+        {incidents !== null && incidents.length > 0 && (
+          <table className="incident-table">
+            <thead>
+              <tr>
+                <th>Severity</th>
+                <th>Incident</th>
+                <th>Source</th>
+                <th>Status</th>
+                <th style={{ textAlign: "right" }}>Reported</th>
+              </tr>
+            </thead>
+            <tbody>
+              {incidents.map((incident) => (
+                <tr key={incident.id}>
+                  <td>
+                    <SeverityBadge severity={incident.severity} />
+                  </td>
+                  <td>
+                    <Link className="incident-row-link" to={`/incidents/${incident.id}`}>
+                      {incident.title}
+                    </Link>
+                  </td>
+                  <td className="cell-muted">{incident.source}</td>
+                  <td>
+                    <StatusBadge status={incident.status} />
+                  </td>
+                  <td className="cell-timestamp" style={{ textAlign: "right" }}>
+                    {formatRelativeTime(incident.createdAt)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   );
 }
