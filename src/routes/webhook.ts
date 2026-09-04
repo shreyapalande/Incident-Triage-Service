@@ -6,6 +6,8 @@ import { triageIncident, TriageError } from "../triage/triageIncident.js";
 import { postToSlack } from "../slack/postToSlack.js";
 import { correlationId } from "../middleware/correlationId.js";
 import { logger as baseLogger } from "../logger.js";
+import { getOrCreateIncident, type IncidentStore } from "./idempotency.js";
+import type { Prisma } from "@prisma/client";
 
 const IncidentAlertSchema = z
   .object({
@@ -63,6 +65,14 @@ export const verifySignature: RequestHandler = (req, res, next) => {
   next();
 };
 
+const IDEMPOTENCY_KEY_HEADER = "idempotency-key";
+
+const prismaIncidentStore: IncidentStore = {
+  findByIdempotencyKey: (key) => prisma.incident.findUnique({ where: { idempotencyKey: key } }),
+  create: (data) =>
+    prisma.incident.create({ data: { ...data, rawPayload: data.rawPayload as Prisma.InputJsonValue } }),
+};
+
 export const webhookRouter = Router();
 
 webhookRouter.post(
@@ -91,15 +101,23 @@ webhookRouter.post(
 
     const { source, title, description } = parsed.data;
     const incidentTitle = title ?? description!.slice(0, 120);
+    const idempotencyKey = req.header(IDEMPOTENCY_KEY_HEADER) || undefined;
 
-    const incident = await prisma.incident.create({
-      data: {
-        source,
-        title: incidentTitle,
-        description,
-        rawPayload: req.body,
-      },
+    const { incident, created } = await getOrCreateIncident(prismaIncidentStore, idempotencyKey, {
+      source,
+      title: incidentTitle,
+      description,
+      rawPayload: req.body,
     });
+
+    if (!created) {
+      log.info(
+        { event: "db_write_result", operation: "idempotent_replay", incidentId: incident.id, idempotencyKey },
+        "Idempotency key matched an existing incident - returning it without creating a duplicate",
+      );
+      return res.status(200).json(incident);
+    }
+
     log.info(
       { event: "db_write_result", operation: "create", incidentId: incident.id },
       "Incident persisted",

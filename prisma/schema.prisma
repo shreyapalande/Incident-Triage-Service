@@ -20,6 +20,7 @@ model Incident {
   status             String    @default("OPEN")
   triageError        String?
   slackMessageTs     String?
+  idempotencyKey     String?   @unique
   createdAt          DateTime  @default(now())
   resolvedAt         DateTime?
 
