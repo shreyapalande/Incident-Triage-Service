@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { webhookRouter } from "./routes/webhook.js";
 import { incidentsRouter } from "./routes/incidents.js";
+import { triageEvalRouter } from "./routes/triageEval.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -13,6 +14,7 @@ app.use(express.json({ limit: "2mb" }));
 
 app.use("/api/webhook", webhookRouter);
 app.use("/api/incidents", incidentsRouter);
+app.use("/api/triage-eval", triageEvalRouter);
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 

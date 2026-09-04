@@ -1,0 +1,184 @@
+{
+    "test_cases": [
+        {
+            "id": 1,
+            "difficulty": "clear-cut",
+            "title": "Production database completely down",
+            "description": "Primary Postgres instance is not accepting connections. All API requests dependent on the database are failing with 500 errors.",
+            "expected_severity": "CRITICAL",
+            "expected_category": "infra",
+            "notes": "Total outage, obvious critical case."
+        },
+        {
+            "id": 2,
+            "difficulty": "clear-cut",
+            "title": "Payment processing API returning 500 for all requests",
+            "description": "Every checkout attempt in the last 15 minutes has failed at the payment step. No successful transactions are going through.",
+            "expected_severity": "CRITICAL",
+            "expected_category": "customer-impact",
+            "notes": "Direct revenue/customer impact, unambiguous."
+        },
+        {
+            "id": 3,
+            "difficulty": "clear-cut",
+            "title": "Checkout endpoint p95 latency above 5 seconds",
+            "description": "The primary checkout API endpoint has had p95 latency above 5000ms for the past 20 minutes, up from a typical 300ms baseline.",
+            "expected_severity": "HIGH",
+            "expected_category": "performance",
+            "notes": "Severe degradation on a critical path, but not full outage."
+        },
+        {
+            "id": 4,
+            "difficulty": "clear-cut",
+            "title": "Internal admin dashboard showing stale cache",
+            "description": "The internal-only admin analytics dashboard is showing data that's about 10 minutes stale. No customer-facing systems affected.",
+            "expected_severity": "LOW",
+            "expected_category": "infra",
+            "notes": "Internal-only, no customer impact, clearly minor."
+        },
+        {
+            "id": 5,
+            "difficulty": "clear-cut",
+            "title": "Customer PII exposed in public S3 bucket",
+            "description": "A misconfigured S3 bucket containing customer names, emails, and addresses was found publicly accessible. Unknown how long it has been exposed.",
+            "expected_severity": "CRITICAL",
+            "expected_category": "security",
+            "notes": "Data breach, unambiguous critical severity."
+        },
+        {
+            "id": 6,
+            "difficulty": "clear-cut",
+            "title": "Nightly ETL job failed, downstream reports missing today's data",
+            "description": "The nightly ETL pipeline failed at 2am. All downstream business reports for today are missing the latest day of data.",
+            "expected_severity": "HIGH",
+            "expected_category": "data",
+            "notes": "Real business impact, but not customer-facing or an active outage."
+        },
+        {
+            "id": 7,
+            "difficulty": "clear-cut",
+            "title": "Typo in internal Slack bot's help message",
+            "description": "The #eng-tools Slack bot's /help command has a typo in the third bullet point of its response.",
+            "expected_severity": "LOW",
+            "expected_category": "infra",
+            "notes": "Trivial, cosmetic, no functional impact."
+        },
+        {
+            "id": 8,
+            "difficulty": "ambiguous",
+            "title": "Elevated error rate on background sync job",
+            "description": "A non-critical background sync job has a 15% error rate in the last hour, but automatic retries are eventually succeeding for all records.",
+            "expected_severity": "MEDIUM",
+            "expected_category": "performance",
+            "notes": "Reasonable people could argue LOW (retries succeed) or MEDIUM (elevated error rate worth watching)."
+        },
+        {
+            "id": 9,
+            "difficulty": "ambiguous",
+            "title": "One of three redundant cache nodes is down",
+            "description": "A single cache node in a 3-node redundant cluster has gone offline. The other two nodes are handling traffic normally, no customer impact detected yet.",
+            "expected_severity": "MEDIUM",
+            "expected_category": "infra",
+            "notes": "Debatable LOW (redundancy is working as designed) vs MEDIUM (reduced headroom, worth fixing before another node fails)."
+        },
+        {
+            "id": 10,
+            "difficulty": "ambiguous",
+            "title": "Suspicious login attempts from unfamiliar IP range",
+            "description": "Security monitoring flagged repeated login attempts from an IP range not previously associated with the account. No successful breach has been confirmed.",
+            "expected_severity": "HIGH",
+            "expected_category": "security",
+            "notes": "Debatable MEDIUM (no confirmed breach) vs HIGH (security incidents warrant caution even unconfirmed)."
+        },
+        {
+            "id": 11,
+            "difficulty": "ambiguous",
+            "title": "Support ticket volume spiked 3x in the last hour",
+            "description": "Customer support has seen a 3x spike in incoming tickets over the last hour. Root cause is not yet identified.",
+            "expected_severity": "MEDIUM",
+            "expected_category": "customer-impact",
+            "notes": "Signal of a real problem, but severity depends on a root cause we don't have yet -- reasonable to rate MEDIUM pending investigation."
+        },
+        {
+            "id": 12,
+            "difficulty": "ambiguous",
+            "title": "Feature flag rollout increased latency for 5% of users in one region",
+            "description": "A new feature flag rollout is causing increased page load latency for approximately 5% of users, isolated to the EU region.",
+            "expected_severity": "MEDIUM",
+            "expected_category": "performance",
+            "notes": "Limited blast radius (5%, one region) argues against HIGH, but real measurable degradation argues against LOW."
+        },
+        {
+            "id": 13,
+            "difficulty": "ambiguous",
+            "title": "Database replica lag increased to 45 seconds",
+            "description": "A read replica's lag behind the primary database has increased to 45 seconds, up from a typical 2 seconds. Primary database is unaffected.",
+            "expected_severity": "MEDIUM",
+            "expected_category": "infra",
+            "notes": "Depends heavily on what reads from that replica -- genuinely ambiguous without more context, good test of how the system handles uncertainty."
+        },
+        {
+            "id": 14,
+            "difficulty": "ambiguous",
+            "title": "Third-party analytics vendor API intermittently timing out",
+            "description": "Our analytics vendor's API is timing out roughly 1 in 10 calls. This is non-blocking -- the app queues and retries analytics events, no user-facing impact.",
+            "expected_severity": "LOW",
+            "expected_category": "infra",
+            "notes": "Debatable LOW (non-blocking, queued) vs MEDIUM (external dependency issue worth tracking)."
+        },
+        {
+            "id": 15,
+            "difficulty": "edge-case",
+            "title": "Something seems off with checkout",
+            "description": "A few users mentioned checkout issues in support chats. No specific error, no metrics reviewed yet.",
+            "expected_severity": "MEDIUM",
+            "expected_category": "customer-impact",
+            "notes": "Deliberately vague -- tests whether the system defaults to a reasonable middle severity given real but unconfirmed signal, rather than over- or under-reacting."
+        },
+        {
+            "id": 16,
+            "difficulty": "edge-case",
+            "title": "Ops dashboard graph looks weird",
+            "description": "Someone on the ops channel noted a dashboard graph 'looks off' compared to usual. No specific metric, service, or threshold named.",
+            "expected_severity": "LOW",
+            "expected_category": "infra",
+            "notes": "Almost no actionable content -- good test of whether the system inflates severity just because it sounds concerning, versus recognizing there's insufficient information."
+        },
+        {
+            "id": 17,
+            "difficulty": "edge-case",
+            "title": "Users reporting the app feels slow today",
+            "description": "Multiple users mentioned general slowness. No specific endpoint, error, or metric identified.",
+            "expected_severity": "MEDIUM",
+            "expected_category": "performance",
+            "notes": "Vague but plausible real signal -- tests reasonable default behavior under ambiguity."
+        },
+        {
+            "id": 18,
+            "difficulty": "edge-case",
+            "title": "Intern accidentally ran an unknown script in production",
+            "description": "An intern ran a script against the production environment. What the script did, and its effects, are not yet known.",
+            "expected_severity": "HIGH",
+            "expected_category": "infra",
+            "notes": "Tests whether the system appropriately treats unknown blast radius as a reason for caution/higher severity, rather than waiting for confirmed harm."
+        },
+        {
+            "id": 19,
+            "difficulty": "edge-case",
+            "title": "(empty alert body)",
+            "description": "",
+            "expected_severity": "LOW",
+            "expected_category": "unknown",
+            "notes": "Degenerate/malformed input -- tests graceful handling of near-empty input rather than a crash or a wildly overconfident guess. 'Correct' answer here is really 'handles it gracefully', not a specific severity."
+        },
+        {
+            "id": 20,
+            "difficulty": "edge-case",
+            "title": "urgent!!! fix now!!!",
+            "description": "urgent!!! fix now!!! this is really bad!!!",
+            "expected_severity": "LOW",
+            "expected_category": "unknown",
+            "notes": "Tests whether the system distinguishes real signal from alarming language with no actual content -- a good LLM triage system should not be swayed by tone alone."
+        }
+    ]
+}
